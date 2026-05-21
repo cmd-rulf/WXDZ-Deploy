@@ -19,6 +19,7 @@ httpx
 langcodes
 jinja2
 lxml
+mega.py
 motor
 natsort
 par2cmdline-turbo
