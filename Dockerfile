@@ -1,10 +1,11 @@
 # ==========================================
 # STAGE 1: BUILD MEGA SDK (The Real MegaApi)
 # ==========================================
-FROM python:3.12-slim-bookworm AS megabuilder
+# Python 3.11 use kiya hai kyunki 3.12 mein 'distutils' remove ho chuka hai
+FROM python:3.11-slim-bookworm AS megabuilder
 
 ENV DEBIAN_FRONTEND=noninteractive
-# C++ dependencies for MEGA SDK (libc-ares-dev added!)
+# C++ dependencies for MEGA SDK + python3.11-dev
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git build-essential autoconf automake libtool pkg-config swig \
     libcurl4-openssl-dev libssl-dev libsqlite3-dev libsodium-dev \
@@ -25,7 +26,7 @@ RUN git clone --depth 1 --branch v${MEGA_SDK_VERSION} https://github.com/meganz/
 # ==========================================
 # STAGE 2: FINAL PRODUCTION IMAGE
 # ==========================================
-FROM python:3.12-slim-bookworm
+FROM python:3.11-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -35,7 +36,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /usr/src/app
 
-# 1. OS Dependencies (libc-ares2 added for runtime)
+# 1. OS Dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     aria2 \
     qbittorrent-nox \
