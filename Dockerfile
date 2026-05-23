@@ -1,4 +1,4 @@
-FROM python:3.11-slim-bookworm
+FROM python:3.12-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /usr/src/app
 
-# 1. OS Dependencies & Binaries Install (libmagic1 added for python-magic)
+# 1. OS Dependencies & Binaries Install
 RUN apt-get update && apt-get install -y --no-install-recommends \
     aria2 \
     qbittorrent-nox \
@@ -37,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 2. RClone Install
 RUN curl -s https://rclone.org/install.sh | bash
 
-# 3. MAGIC SYMLINKS (Purane custom names ko naye standard binaries se jodna bina Python code change kiye)
+# 3. MAGIC SYMLINKS (Custom names ko standard binaries se jodna)
 RUN ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/torrentgod && \
     ln -sf /usr/bin/aria2c /usr/local/bin/blitzfetcher && \
     ln -sf /usr/bin/aria2c /usr/local/bin/speeddemon && \
