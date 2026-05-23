@@ -7,14 +7,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /usr/src/app
 
-# 1. OS Dependencies, Python 3.12 & Build Tools (Native in 24.04)
+# 1. OS Dependencies, Python 3.12 & Build Tools (Cleaned for Ubuntu 24.04)
+# Note: Sirf '-dev' packages rakhe hain taaki runtime conflicts na aayein
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 python3.12-venv python3.12-dev python3-pip python3-wheel python3-setuptools \
     aria2 qbittorrent-nox ffmpeg p7zip-full unzip wget curl git \
-    libmagic1 libmediainfo0v5 libmediainfo-dev libxml2 libxslt1.1 \
-    libglib2.0-0 libsodium23 libc-ares2 libssl3 libsqlite3-0 \
-    libcurl4 libfreeimage3 libpcre3 libcrypto++-dev \
-    libcurl4-openssl-dev libssl-dev libsqlite3-dev libsodium-dev libfreeimage-dev libpcre3-dev \
+    libmagic1 libmediainfo-dev libxml2 libxslt1.1 \
+    libglib2.0-dev libsodium-dev libc-ares-dev libssl-dev libsqlite3-dev \
+    libcurl4-openssl-dev libfreeimage-dev libpcre2-dev \
+    libcrypto++-dev \
     build-essential autoconf autoconf-archive automake libtool libtool-bin pkg-config swig cmake \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
