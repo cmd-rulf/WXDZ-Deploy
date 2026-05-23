@@ -1,11 +1,11 @@
 # ==========================================
-# STAGE 1: BUILD MEGA SDK (Python 3.12 + distutils Matrix Hack)
+# STAGE 1 — Build Mega SDK Wheel
 # ==========================================
-FROM python:3.12-slim-bookworm AS megabuilder
+FROM python:3.12-slim-bookworm AS mega-builder
 
 ENV DEBIAN_FRONTEND=noninteractive
-# Matrix Hack: Force setuptools to provide distutils for Python 3.12
 ENV SETUPTOOLS_USE_DISTUTILS=local
+ENV MEGA_SDK_VERSION=4.8.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git build-essential autoconf automake libtool pkg-config swig \
@@ -14,21 +14,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g-dev libuv1-dev libc-ares-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade setuptools to inject distutils fallback
-RUN pip install --no-cache-dir --upgrade setuptools wheel pip
+RUN pip install --upgrade pip setuptools wheel
 
-ENV MEGA_SDK_VERSION=4.8.0
-# Compile MEGA SDK from source
-RUN git clone --depth 1 --branch v${MEGA_SDK_VERSION} https://github.com/meganz/sdk.git /tmp/sdk && \
+RUN git clone --depth 1 --branch v${MEGA_SDK_VERSION} \
+    https://github.com/meganz/sdk.git /tmp/sdk && \
     cd /tmp/sdk && \
     ./autogen.sh && \
-    ./configure --disable-silent-rules --enable-python --with-sodium --disable-examples && \
+    ./configure \
+    --enable-python \
+    --with-sodium \
+    --disable-examples && \
     make -j$(nproc) && \
     cd bindings/python && \
-    python3 setup.py bdist_wheel
+    python setup.py bdist_wheel
 
 # ==========================================
-# STAGE 2: FINAL PRODUCTION IMAGE (Python 3.12 for f-string support)
+# STAGE 2 — Final Runtime Image
 # ==========================================
 FROM python:3.12-slim-bookworm
 
@@ -40,83 +41,99 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /usr/src/app
 
-# 1. OS Dependencies
+# ==========================================
+# System Dependencies
+# ==========================================
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    aria2 qbittorrent-nox ffmpeg p7zip-full unzip wget curl git \
-    libmagic1 libmediainfo0v5 libmediainfo-dev libxml2 libxslt1.1 \
-    libglib2.0-0 libsodium23 libc-ares2 libssl3 libsqlite3-0 \
-    libcurl4 libfreeimage3 libpcre3 libcrypto++-dev libuv1 zlib1g \
+    aria2 \
+    qbittorrent-nox \
+    ffmpeg \
+    p7zip-full \
+    unzip \
+    curl \
+    wget \
+    git \
     ca-certificates \
+    libmagic1 \
+    libmediainfo0v5 \
+    libsodium23 \
+    libc-ares2 \
+    libssl3 \
+    libsqlite3-0 \
+    libcurl4 \
+    libfreeimage3 \
+    libpcre3 \
+    libuv1 \
+    zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. RClone Install
-RUN curl -s https://rclone.org/install.sh | bash
+# ==========================================
+# Install Rclone
+# ==========================================
+RUN curl https://rclone.org/install.sh | bash
 
-# 3. MAGIC SYMLINKS (Custom names ko standard binaries se jodna)
+# ==========================================
+# Custom Binary Aliases
+# ==========================================
 RUN ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/torrentgod && \
-    ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/stormtorrent && \
     ln -sf /usr/bin/aria2c /usr/local/bin/blitzfetcher && \
-    ln -sf /usr/bin/aria2c /usr/local/bin/speeddemon && \
     ln -sf /usr/bin/ffmpeg /usr/local/bin/mediaforge && \
-    ln -sf /usr/local/bin/rclone /usr/local/bin/ghostdrive && \
-    echo -e '#!/bin/bash\nexit 0' > /usr/local/bin/newsripper && \
-    chmod +x /usr/local/bin/newsripper
+    ln -sf /usr/local/bin/rclone /usr/local/bin/ghostdrive
 
-# 4. UV Installer & Venv Setup
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
-RUN uv venv .venv
+# ==========================================
+# Install UV
+# ==========================================
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# 5. Install Base Requirements
+# ==========================================
+# Create Virtual Environment
+# ==========================================
+RUN uv venv /usr/src/app/.venv
+
+# ==========================================
+# Install Python Requirements
+# ==========================================
 COPY requirements.txt .
-RUN uv pip install --no-cache -r requirements.txt || true
 
-# 6. CRITICAL FIX: Install compiled Mega SDK (MegaApi)
-COPY --from=megabuilder /tmp/sdk/bindings/python/dist/*.whl /tmp/
-RUN uv pip install --no-cache-dir --force-reinstall /tmp/*.whl && rm -rf /tmp/*.whl
+RUN sed -i '/pycrypto/d' requirements.txt && \
+    sed -i '/mega/d' requirements.txt || true
 
-# 7. Fix Pycrypto & Tenacity
-RUN uv pip uninstall -y pycrypto || true
-RUN uv pip install --no-cache "pycryptodome" "tenacity>=8.2.0"
+RUN uv pip install --system -r requirements.txt
 
-# 8. Install pip into venv (Fixes "cannot stat pip" error)
-RUN uv pip install --no-cache pip
+# ==========================================
+# Install Fixed Dependencies
+# ==========================================
+RUN uv pip install --system \
+    pycryptodome \
+    "tenacity>=8.2.0"
 
-# 9. WRAPPER HACK (Prevent update.py from ruining the venv at runtime)
-# Wrap UV
-RUN mv /usr/local/bin/uv /usr/local/bin/uv-original && \
-    echo '#!/bin/bash' > /usr/local/bin/uv && \
-    echo 'ARGS=()' >> /usr/local/bin/uv && \
-    echo 'for arg in "$@"; do' >> /usr/local/bin/uv && \
-    echo '  if [[ "$arg" == *requirements.txt ]]; then' >> /usr/local/bin/uv && \
-    echo '    grep -vEi "^(mega|mega\.py|pycrypto)" "$arg" > /tmp/safe_req.txt 2>/dev/null || true' >> /usr/local/bin/uv && \
-    echo '    ARGS+=("/tmp/safe_req.txt")' >> /usr/local/bin/uv && \
-    echo '  elif [[ "$arg" == "mega" || "$arg" == "mega.py" || "$arg" == "pycrypto" ]]; then continue' >> /usr/local/bin/uv && \
-    echo '  else ARGS+=("$arg"); fi' >> /usr/local/bin/uv && \
-    echo 'done' >> /usr/local/bin/uv && \
-    echo '/usr/local/bin/uv-original "${ARGS[@]}"' >> /usr/local/bin/uv && \
-    echo '/usr/local/bin/uv-original pip install --no-cache "tenacity>=8.2.0" "pycryptodome" >/dev/null 2>&1' >> /usr/local/bin/uv && \
-    echo '/usr/local/bin/uv-original pip uninstall -y pycrypto >/dev/null 2>&1' >> /usr/local/bin/uv && \
-    chmod +x /usr/local/bin/uv
+# ==========================================
+# Install Mega SDK Wheel
+# ==========================================
+COPY --from=mega-builder /tmp/sdk/bindings/python/dist/*.whl /tmp/
 
-# Wrap PIP
-RUN mv /usr/src/app/.venv/bin/pip /usr/src/app/.venv/bin/pip-original && \
-    echo '#!/bin/bash' > /usr/src/app/.venv/bin/pip && \
-    echo 'ARGS=()' >> /usr/src/app/.venv/bin/pip && \
-    echo 'for arg in "$@"; do' >> /usr/src/app/.venv/bin/pip && \
-    echo '  if [[ "$arg" == *requirements.txt ]]; then' >> /usr/src/app/.venv/bin/pip && \
-    echo '    grep -vEi "^(mega|mega\.py|pycrypto)" "$arg" > /tmp/safe_req.txt 2>/dev/null || true' >> /usr/src/app/.venv/bin/pip && \
-    echo '    ARGS+=("/tmp/safe_req.txt")' >> /usr/src/app/.venv/bin/pip && \
-    echo '  elif [[ "$arg" == "mega" || "$arg" == "mega.py" || "$arg" == "pycrypto" ]]; then continue' >> /usr/src/app/.venv/bin/pip && \
-    echo '  else ARGS+=("$arg"); fi' >> /usr/src/app/.venv/bin/pip && \
-    echo 'done' >> /usr/src/app/.venv/bin/pip && \
-    echo '/usr/src/app/.venv/bin/pip-original "${ARGS[@]}"' >> /usr/src/app/.venv/bin/pip && \
-    echo '/usr/src/app/.venv/bin/pip-original install --no-cache "tenacity>=8.2.0" "pycryptodome" >/dev/null 2>&1' >> /usr/src/app/.venv/bin/pip && \
-    echo '/usr/src/app/.venv/bin/pip-original uninstall -y pycrypto >/dev/null 2>&1' >> /usr/src/app/.venv/bin/pip && \
-    chmod +x /usr/src/app/.venv/bin/pip
+RUN pip install /tmp/*.whl && rm -rf /tmp/*.whl
 
-# 10. Copy Rest of the Code
+# ==========================================
+# Copy Project Files
+# ==========================================
 COPY . .
-RUN chmod +x start.sh 2>/dev/null || true
 
-# 11. ULTIMATE CMD
-CMD aria2c --enable-rpc --rpc-listen-all=true --rpc-allow-origin-all --daemon=true --log=aria2.log --log-level=notice && bash start.sh
+RUN chmod +x start.sh || true
+
+# ==========================================
+# Health Fixes
+# ==========================================
+RUN pip install --upgrade pip setuptools wheel
+
+# ==========================================
+# Start Services
+# ==========================================
+CMD aria2c \
+    --enable-rpc \
+    --rpc-listen-all=true \
+    --rpc-allow-origin-all \
+    --daemon=true \
+    --log=aria2.log \
+    --log-level=notice \
+    && bash start.sh
