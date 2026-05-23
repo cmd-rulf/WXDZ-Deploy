@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     p7zip-full \
     ffmpeg \
+    mediainfo \
     aria2 \
     qbittorrent-nox \
     autoconf \
@@ -59,6 +60,7 @@ RUN ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/torrentgod && \
     ln -sf /usr/bin/ffmpeg /usr/local/bin/vidwarlock && \
     ln -sf /usr/bin/ffmpeg /usr/local/bin/mediaforge && \
     ln -sf /usr/bin/ffprobe /usr/local/bin/ffprobe && \
+    ln -sf /usr/bin/mediainfo /usr/local/bin/mediainfo && \
     ln -sf /usr/local/bin/rclone /usr/local/bin/cloudphantom && \
     ln -sf /usr/local/bin/rclone /usr/local/bin/ghostdrive
 
@@ -93,6 +95,8 @@ RUN git clone --depth 1 --branch v4.8.0 \
 RUN rm -rf /tmp/sdk
 
 COPY . .
+
+RUN sed -i 's/link_id = (await telegraph.create_page(title="MediaInfo X", content=tc))\\["path"\\]/try:\\n    tc = tc if tc else "Failed to fetch mediainfo."\\nexcept:\\n    tc = "Failed to fetch mediainfo."\\n\\nlink_id = (await telegraph.create_page(title="MediaInfo X", content=tc))["path"]/g' /usr/src/app/bot/modules/mediainfo.py || true
 
 RUN chmod +x start.sh || true
 
