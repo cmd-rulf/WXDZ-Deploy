@@ -1,4 +1,4 @@
-FROM mysterysd/wzmlx:v3
+FROM tellyhubcloud/xdzmltb:dev
 
 WORKDIR /usr/src/app
 RUN chmod 777 /usr/src/app
