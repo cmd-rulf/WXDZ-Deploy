@@ -1,17 +1,21 @@
 # ==========================================
-# STAGE 1: BUILD MEGA SDK (The Real MegaApi)
+# STAGE 1: BUILD MEGA SDK (Python 3.12 + distutils Matrix Hack)
 # ==========================================
-# Python 3.11 use kiya hai kyunki 3.12 mein 'distutils' remove ho chuka hai
-FROM python:3.11-slim-bookworm AS megabuilder
+FROM python:3.12-slim-bookworm AS megabuilder
 
 ENV DEBIAN_FRONTEND=noninteractive
-# C++ dependencies for MEGA SDK + python3.11-dev
+# Matrix Hack: Force setuptools to provide distutils for Python 3.12
+ENV SETUPTOOLS_USE_DISTUTILS=local
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git build-essential autoconf automake libtool pkg-config swig \
     libcurl4-openssl-dev libssl-dev libsqlite3-dev libsodium-dev \
     libfreeimage-dev libpcre3-dev libcrypto++-dev cmake \
     zlib1g-dev libuv1-dev libc-ares-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Upgrade setuptools to inject distutils fallback
+RUN pip install --no-cache-dir --upgrade setuptools wheel pip
 
 ENV MEGA_SDK_VERSION=4.8.0
 # Compile MEGA SDK from source
@@ -24,9 +28,9 @@ RUN git clone --depth 1 --branch v${MEGA_SDK_VERSION} https://github.com/meganz/
     python3 setup.py bdist_wheel
 
 # ==========================================
-# STAGE 2: FINAL PRODUCTION IMAGE
+# STAGE 2: FINAL PRODUCTION IMAGE (Python 3.12 for f-string support)
 # ==========================================
-FROM python:3.11-slim-bookworm
+FROM python:3.12-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -38,30 +42,10 @@ WORKDIR /usr/src/app
 
 # 1. OS Dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    aria2 \
-    qbittorrent-nox \
-    ffmpeg \
-    p7zip-full \
-    unzip \
-    wget \
-    curl \
-    git \
-    libmagic1 \
-    libmediainfo0v5 \
-    libmediainfo-dev \
-    libxml2 \
-    libxslt1.1 \
-    libglib2.0-0 \
-    libsodium23 \
-    libc-ares2 \
-    libssl3 \
-    libsqlite3-0 \
-    libcurl4 \
-    libfreeimage3 \
-    libpcre3 \
-    libcrypto++-dev \
-    libuv1 \
-    zlib1g \
+    aria2 qbittorrent-nox ffmpeg p7zip-full unzip wget curl git \
+    libmagic1 libmediainfo0v5 libmediainfo-dev libxml2 libxslt1.1 \
+    libglib2.0-0 libsodium23 libc-ares2 libssl3 libsqlite3-0 \
+    libcurl4 libfreeimage3 libpcre3 libcrypto++-dev libuv1 zlib1g \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -86,7 +70,7 @@ RUN uv venv .venv
 COPY requirements.txt .
 RUN uv pip install --no-cache -r requirements.txt || true
 
-# 6. 🚨 CRITICAL FIX: Install our compiled Mega SDK (MegaApi)
+# 6. CRITICAL FIX: Install compiled Mega SDK (MegaApi)
 COPY --from=megabuilder /tmp/sdk/bindings/python/dist/*.whl /tmp/
 RUN uv pip install --no-cache-dir --force-reinstall /tmp/*.whl && rm -rf /tmp/*.whl
 
@@ -94,7 +78,11 @@ RUN uv pip install --no-cache-dir --force-reinstall /tmp/*.whl && rm -rf /tmp/*.
 RUN uv pip uninstall -y pycrypto || true
 RUN uv pip install --no-cache "pycryptodome" "tenacity>=8.2.0"
 
-# 8. WRAPPER HACK (Prevent update.py from ruining the venv at runtime)
+# 8. Install pip into venv (Fixes "cannot stat pip" error)
+RUN uv pip install --no-cache pip
+
+# 9. WRAPPER HACK (Prevent update.py from ruining the venv at runtime)
+# Wrap UV
 RUN mv /usr/local/bin/uv /usr/local/bin/uv-original && \
     echo '#!/bin/bash' > /usr/local/bin/uv && \
     echo 'ARGS=()' >> /usr/local/bin/uv && \
@@ -110,6 +98,7 @@ RUN mv /usr/local/bin/uv /usr/local/bin/uv-original && \
     echo '/usr/local/bin/uv-original pip uninstall -y pycrypto >/dev/null 2>&1' >> /usr/local/bin/uv && \
     chmod +x /usr/local/bin/uv
 
+# Wrap PIP
 RUN mv /usr/src/app/.venv/bin/pip /usr/src/app/.venv/bin/pip-original && \
     echo '#!/bin/bash' > /usr/src/app/.venv/bin/pip && \
     echo 'ARGS=()' >> /usr/src/app/.venv/bin/pip && \
@@ -125,9 +114,9 @@ RUN mv /usr/src/app/.venv/bin/pip /usr/src/app/.venv/bin/pip-original && \
     echo '/usr/src/app/.venv/bin/pip-original uninstall -y pycrypto >/dev/null 2>&1' >> /usr/src/app/.venv/bin/pip && \
     chmod +x /usr/src/app/.venv/bin/pip
 
-# 9. Copy Rest of the Code
+# 10. Copy Rest of the Code
 COPY . .
 RUN chmod +x start.sh 2>/dev/null || true
 
-# 10. ULTIMATE CMD
+# 11. ULTIMATE CMD
 CMD aria2c --enable-rpc --rpc-listen-all=true --rpc-allow-origin-all --daemon=true --log=aria2.log --log-level=notice && bash start.sh
