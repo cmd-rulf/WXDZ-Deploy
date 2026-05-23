@@ -1,3 +1,29 @@
+# ==========================================
+# STAGE 1: BUILD MEGA SDK (The Matrix Hack)
+# ==========================================
+FROM python:3.12-slim-bookworm AS megabuilder
+
+ENV DEBIAN_FRONTEND=noninteractive
+# Mega SDK compile karne ke liye C++ dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git build-essential autoconf automake libtool pkg-config swig \
+    libcurl4-openssl-dev libssl-dev libsqlite3-dev libsodium-dev \
+    libfreeimage-dev libpcre3-dev libcrypto++-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV MEGA_SDK_VERSION=4.8.0
+# Meganz SDK clone aur Python bindings compile
+RUN git clone --depth 1 --branch v${MEGA_SDK_VERSION} https://github.com/meganz/sdk.git /tmp/sdk && \
+    cd /tmp/sdk && \
+    ./autogen.sh && \
+    ./configure --disable-silent-rules --enable-python --with-sodium --disable-examples && \
+    make -j$(nproc) && \
+    cd bindings/python && \
+    python3 setup.py bdist_wheel
+
+# ==========================================
+# STAGE 2: FINAL PRODUCTION IMAGE
+# ==========================================
 FROM python:3.12-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -8,12 +34,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /usr/src/app
 
-# 1. OS Dependencies & Binaries
+# 1. OS Dependencies & Binaries (Mega SDK runtime libs included)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     aria2 qbittorrent-nox ffmpeg p7zip-full unzip wget curl git \
     libmagic1 libmediainfo0v5 libmediainfo-dev libxml2 libxslt1.1 \
     libglib2.0-0 libsodium23 libc-ares2 libssl3 libsqlite3-0 \
-    libcurl4 libfreeimage3 ca-certificates build-essential python3-dev \
+    libcurl4 libfreeimage3 libpcre3 libcrypto++-dev \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. RClone Install
@@ -33,36 +60,21 @@ RUN ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/torrentgod && \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
 RUN uv venv .venv
 
-# 5. 🚀 GOD MODE MATRIX HACK (Auto-Fix pycrypto at Runtime)
-# update.py baar-baar requirements.txt se pycrypto install kar deta hai.
-# Hum uv aur pip ko wrap kar rahe hain taaki install hone ke turant baad 
-# yeh automatically pycrypto ko uda de aur pycryptodome laga de!
-RUN mv /usr/bin/uv /usr/bin/uv-original && \
-    echo '#!/bin/bash' > /usr/bin/uv && \
-    echo '/usr/bin/uv-original "$@"' >> /usr/bin/uv && \
-    echo 'if [[ "$*" == *"install"* ]]; then' >> /usr/bin/uv && \
-    echo '  /usr/bin/uv-original pip uninstall -y pycrypto >/dev/null 2>&1' >> /usr/bin/uv && \
-    echo '  /usr/bin/uv-original pip install pycryptodome >/dev/null 2>&1' >> /usr/bin/uv && \
-    echo 'fi' >> /usr/bin/uv && \
-    chmod +x /usr/bin/uv
-
-RUN mv /usr/local/bin/pip /usr/local/bin/pip-original || true
-RUN echo '#!/bin/bash' > /usr/local/bin/pip && \
-    echo '/usr/local/bin/pip-original "$@"' >> /usr/local/bin/pip && \
-    echo 'if [[ "$*" == *"install"* ]]; then' >> /usr/local/bin/pip && \
-    echo '  /usr/local/bin/pip-original uninstall -y pycrypto >/dev/null 2>&1' >> /usr/local/bin/pip && \
-    echo '  /usr/local/bin/pip-original install pycryptodome >/dev/null 2>&1' >> /usr/local/bin/pip && \
-    echo 'fi' >> /usr/local/bin/pip && \
-    chmod +x /usr/local/bin/pip
-
-# 6. Copy Requirements & Pre-install
+# 5. Main Dependencies (Pehle normal requirements install)
 COPY requirements.txt .
-RUN uv pip install --no-cache -r requirements.txt || true
-RUN uv pip install --no-cache pycryptodome && uv pip uninstall -y pycrypto || true
+RUN uv pip install --no-cache -r requirements.txt
 
-# 7. Copy Rest of the Code
+# 6. 🚨 CRITICAL FIX: Overwrite PyPI mega.py with our compiled Mega SDK (MegaApi)
+COPY --from=megabuilder /tmp/sdk/bindings/python/dist/*.whl /tmp/
+RUN uv pip install --no-cache-dir --force-reinstall /tmp/*.whl && rm -rf /tmp/*.whl
+
+# 7. Fix pycrypto SyntaxError (Python 3.12 compatibility)
+RUN uv pip uninstall -y pycrypto || true
+RUN uv pip install --no-cache "pycryptodome" "tenacity>=8.2.0"
+
+# 8. Copy Rest of the Code
 COPY . .
 RUN chmod +x start.sh 2>/dev/null || true
 
-# 8. ULTIMATE CMD
+# 9. ULTIMATE CMD (Aria2 Daemon Start + Bot Start)
 CMD aria2c --enable-rpc --rpc-listen-all=true --rpc-allow-origin-all --daemon=true --log=aria2.log --log-level=notice && bash start.sh
