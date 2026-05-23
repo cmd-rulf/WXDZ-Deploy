@@ -4,7 +4,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    PATH="/usr/src/app/.venv/bin:$PATH"
+    PATH="/usr/src/app/.venv/bin:$PATH" \
+    LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"
 
 WORKDIR /usr/src/app
 
@@ -81,6 +82,8 @@ RUN git clone --depth 1 --branch v4.8.0 \
     --with-sodium \
     --disable-examples && \
     make -j$(nproc) && \
+    make install && \
+    ldconfig && \
     cd bindings/python && \
     /usr/src/app/.venv/bin/python setup.py install
 
