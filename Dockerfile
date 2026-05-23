@@ -4,12 +4,12 @@
 FROM python:3.12-slim-bookworm AS megabuilder
 
 ENV DEBIAN_FRONTEND=noninteractive
-# C++ dependencies for MEGA SDK (libuv1-dev fixed!)
+# C++ dependencies for MEGA SDK (libc-ares-dev added!)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git build-essential autoconf automake libtool pkg-config swig \
     libcurl4-openssl-dev libssl-dev libsqlite3-dev libsodium-dev \
     libfreeimage-dev libpcre3-dev libcrypto++-dev cmake \
-    zlib1g-dev libuv1-dev \
+    zlib1g-dev libuv1-dev libc-ares-dev \
     && rm -rf /var/lib/apt/lists/*
 
 ENV MEGA_SDK_VERSION=4.8.0
@@ -35,7 +35,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /usr/src/app
 
-# 1. OS Dependencies (libuv1 added for runtime)
+# 1. OS Dependencies (libc-ares2 added for runtime)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     aria2 \
     qbittorrent-nox \
@@ -60,6 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpcre3 \
     libcrypto++-dev \
     libuv1 \
+    zlib1g \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
