@@ -1,57 +1,70 @@
-FROM ubuntu:22.04
+# ==========================================
+# STAGE 1: BUILD MEGA SDK (The Real MegaApi)
+# ==========================================
+FROM python:3.12-slim-bookworm AS megabuilder
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PATH="/usr/src/app/.venv/bin:$PATH"
-
-WORKDIR /usr/src/app
-
-# 1. Add deadsnakes PPA for Python 3.12 on Ubuntu 22.04 (Bypasses 24.04 package conflicts)
+ENV DEBIAN_FRONTEND=noninteractive
+# C++ dependencies for MEGA SDK
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update
-
-# 2. OS Dependencies, Python 3.12 & Build Tools (No 24.04 conflicts!)
-RUN apt-get install -y --no-install-recommends \
-    python3.12 python3.12-venv python3.12-dev python3.12-distutils \
-    aria2 qbittorrent-nox ffmpeg p7zip-full unzip wget curl git \
-    libmagic1 libmediainfo-dev libxml2 libxslt1.1 \
-    libglib2.0-dev libsodium-dev libc-ares-dev libssl-dev libsqlite3-dev \
-    libcurl4-openssl-dev libfreeimage-dev libpcre3-dev \
-    libcrypto++-dev \
-    build-essential autoconf autoconf-archive automake libtool libtool-bin pkg-config swig cmake \
-    ca-certificates \
+    git build-essential autoconf automake libtool pkg-config swig \
+    libcurl4-openssl-dev libssl-dev libsqlite3-dev libsodium-dev \
+    libfreeimage-dev libpcre3-dev libcrypto++-dev cmake \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Python 3.12 as default and install pip
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
-    ln -sf /usr/bin/python3.12 /usr/bin/python && \
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
-
-# 3. RClone Install
-RUN curl -s https://rclone.org/install.sh | bash
-
-# 4. Install UV (Fast Package Manager)
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
-
-# 5. Compile MEGA SDK (The Real MegaApi from C++ Source)
-RUN git clone --depth 1 --branch v4.8.0 https://github.com/meganz/sdk.git /tmp/sdk && \
+ENV MEGA_SDK_VERSION=4.8.0
+# Compile MEGA SDK from source
+RUN git clone --depth 1 --branch v${MEGA_SDK_VERSION} https://github.com/meganz/sdk.git /tmp/sdk && \
     cd /tmp/sdk && \
     ./autogen.sh && \
     ./configure --disable-silent-rules --enable-python --with-sodium --disable-examples && \
     make -j$(nproc) && \
     cd bindings/python && \
-    python3 setup.py bdist_wheel && \
-    cp dist/*.whl /tmp/mega_sdk.whl && \
-    rm -rf /tmp/sdk
+    python3 setup.py bdist_wheel
 
-# 6. Setup Venv & Install MEGA SDK
-RUN python3 -m venv .venv
-RUN pip install --no-cache-dir /tmp/mega_sdk.whl && rm /tmp/mega_sdk.whl
+# ==========================================
+# STAGE 2: FINAL PRODUCTION IMAGE
+# ==========================================
+FROM python:3.12-slim-bookworm
 
-# 7. MAGIC SYMLINKS (Custom names ko standard binaries se jodna)
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/usr/src/app/.venv/bin:$PATH"
+
+WORKDIR /usr/src/app
+
+# 1. OS Dependencies (Debian Bookworm - No Ubuntu conflicts!)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    aria2 \
+    qbittorrent-nox \
+    ffmpeg \
+    p7zip-full \
+    unzip \
+    wget \
+    curl \
+    git \
+    libmagic1 \
+    libmediainfo0v5 \
+    libmediainfo-dev \
+    libxml2 \
+    libxslt1.1 \
+    libglib2.0-0 \
+    libsodium23 \
+    libc-ares2 \
+    libssl3 \
+    libsqlite3-0 \
+    libcurl4 \
+    libfreeimage3 \
+    libpcre3 \
+    libcrypto++-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. RClone Install
+RUN curl -s https://rclone.org/install.sh | bash
+
+# 3. MAGIC SYMLINKS (Custom names ko standard binaries se jodna)
 RUN ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/torrentgod && \
     ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/stormtorrent && \
     ln -sf /usr/bin/aria2c /usr/local/bin/blitzfetcher && \
@@ -61,12 +74,23 @@ RUN ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/torrentgod && \
     echo -e '#!/bin/bash\nexit 0' > /usr/local/bin/newsripper && \
     chmod +x /usr/local/bin/newsripper
 
-# 8. Install Base Requirements
+# 4. UV Installer & Venv Setup
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+RUN uv venv .venv
+
+# 5. Install Base Requirements
 COPY requirements.txt .
 RUN uv pip install --no-cache -r requirements.txt || true
 
-# 9. 🚨 WRAPPER HACK (Prevent update.py from sabotaging at runtime)
-# Wrap UV
+# 6. 🚨 CRITICAL FIX: Install our compiled Mega SDK (MegaApi)
+COPY --from=megabuilder /tmp/sdk/bindings/python/dist/*.whl /tmp/
+RUN uv pip install --no-cache-dir --force-reinstall /tmp/*.whl && rm -rf /tmp/*.whl
+
+# 7. Fix Pycrypto & Tenacity
+RUN uv pip uninstall -y pycrypto || true
+RUN uv pip install --no-cache "pycryptodome" "tenacity>=8.2.0"
+
+# 8. WRAPPER HACK (Prevent update.py from ruining the venv at runtime)
 RUN mv /usr/local/bin/uv /usr/local/bin/uv-original && \
     echo '#!/bin/bash' > /usr/local/bin/uv && \
     echo 'ARGS=()' >> /usr/local/bin/uv && \
@@ -78,9 +102,10 @@ RUN mv /usr/local/bin/uv /usr/local/bin/uv-original && \
     echo '  else ARGS+=("$arg"); fi' >> /usr/local/bin/uv && \
     echo 'done' >> /usr/local/bin/uv && \
     echo '/usr/local/bin/uv-original "${ARGS[@]}"' >> /usr/local/bin/uv && \
+    echo '/usr/local/bin/uv-original pip install --no-cache "tenacity>=8.2.0" "pycryptodome" >/dev/null 2>&1' >> /usr/local/bin/uv && \
+    echo '/usr/local/bin/uv-original pip uninstall -y pycrypto >/dev/null 2>&1' >> /usr/local/bin/uv && \
     chmod +x /usr/local/bin/uv
 
-# Wrap PIP
 RUN mv /usr/src/app/.venv/bin/pip /usr/src/app/.venv/bin/pip-original && \
     echo '#!/bin/bash' > /usr/src/app/.venv/bin/pip && \
     echo 'ARGS=()' >> /usr/src/app/.venv/bin/pip && \
@@ -92,11 +117,13 @@ RUN mv /usr/src/app/.venv/bin/pip /usr/src/app/.venv/bin/pip-original && \
     echo '  else ARGS+=("$arg"); fi' >> /usr/src/app/.venv/bin/pip && \
     echo 'done' >> /usr/src/app/.venv/bin/pip && \
     echo '/usr/src/app/.venv/bin/pip-original "${ARGS[@]}"' >> /usr/src/app/.venv/bin/pip && \
+    echo '/usr/src/app/.venv/bin/pip-original install --no-cache "tenacity>=8.2.0" "pycryptodome" >/dev/null 2>&1' >> /usr/src/app/.venv/bin/pip && \
+    echo '/usr/src/app/.venv/bin/pip-original uninstall -y pycrypto >/dev/null 2>&1' >> /usr/src/app/.venv/bin/pip && \
     chmod +x /usr/src/app/.venv/bin/pip
 
-# 10. Copy Code & Permissions
+# 9. Copy Rest of the Code
 COPY . .
 RUN chmod +x start.sh 2>/dev/null || true
 
-# 11. ULTIMATE CMD (Aria2 Daemon Start + Bot Start)
+# 10. ULTIMATE CMD
 CMD aria2c --enable-rpc --rpc-listen-all=true --rpc-allow-origin-all --daemon=true --log=aria2.log --log-level=notice && bash start.sh
