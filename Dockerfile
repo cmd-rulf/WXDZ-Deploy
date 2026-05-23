@@ -4,11 +4,12 @@
 FROM python:3.12-slim-bookworm AS megabuilder
 
 ENV DEBIAN_FRONTEND=noninteractive
-# C++ dependencies for MEGA SDK
+# C++ dependencies for MEGA SDK (zlib1g-dev & libuv-dev added!)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git build-essential autoconf automake libtool pkg-config swig \
     libcurl4-openssl-dev libssl-dev libsqlite3-dev libsodium-dev \
     libfreeimage-dev libpcre3-dev libcrypto++-dev cmake \
+    zlib1g-dev libuv-dev \
     && rm -rf /var/lib/apt/lists/*
 
 ENV MEGA_SDK_VERSION=4.8.0
@@ -34,7 +35,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /usr/src/app
 
-# 1. OS Dependencies (Debian Bookworm - No Ubuntu conflicts!)
+# 1. OS Dependencies (zlib1g runtime added)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     aria2 \
     qbittorrent-nox \
@@ -58,6 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfreeimage3 \
     libpcre3 \
     libcrypto++-dev \
+    zlib1g \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
