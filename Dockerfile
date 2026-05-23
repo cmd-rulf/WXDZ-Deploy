@@ -47,7 +47,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
 RUN curl https://rclone.org/install.sh | bash
+
+RUN ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/torrentgod && \
+    ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/stormtorrent && \
+    ln -sf /usr/bin/aria2c /usr/local/bin/blitzfetcher && \
+    ln -sf /usr/bin/aria2c /usr/local/bin/speeddemon && \
+    ln -sf /usr/bin/ffmpeg /usr/local/bin/mediaforge && \
+    ln -sf /usr/local/bin/rclone /usr/local/bin/ghostdrive
 
 RUN python -m venv .venv
 
