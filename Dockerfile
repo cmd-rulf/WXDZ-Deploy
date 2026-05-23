@@ -1,52 +1,50 @@
-# ==========================================
-# STAGE 1: BUILD MEGA SDK (The Matrix Hack)
-# ==========================================
-FROM python:3.12-slim-bookworm AS megabuilder
+FROM ubuntu:24.04
 
-ENV DEBIAN_FRONTEND=noninteractive
-# Mega SDK compile karne ke liye C++ dependencies
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PATH="/usr/src/app/.venv/bin:$PATH"
+
+WORKDIR /usr/src/app
+
+# 1. OS Dependencies, Python 3.12 & Build Tools (Native in 24.04)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git build-essential autoconf automake libtool pkg-config swig \
-    libcurl4-openssl-dev libssl-dev libsqlite3-dev libsodium-dev \
-    libfreeimage-dev libpcre3-dev libcrypto++-dev \
+    python3.12 python3.12-venv python3.12-dev python3-pip python3-wheel python3-setuptools \
+    aria2 qbittorrent-nox ffmpeg p7zip-full unzip wget curl git \
+    libmagic1 libmediainfo0v5 libmediainfo-dev libxml2 libxslt1.1 \
+    libglib2.0-0 libsodium23 libc-ares2 libssl3 libsqlite3-0 \
+    libcurl4 libfreeimage3 libpcre3 libcrypto++-dev \
+    libcurl4-openssl-dev libssl-dev libsqlite3-dev libsodium-dev libfreeimage-dev libpcre3-dev \
+    build-essential autoconf autoconf-archive automake libtool libtool-bin pkg-config swig cmake \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-ENV MEGA_SDK_VERSION=4.8.0
-# Meganz SDK clone aur Python bindings compile
-RUN git clone --depth 1 --branch v${MEGA_SDK_VERSION} https://github.com/meganz/sdk.git /tmp/sdk && \
+# Set Python 3.12 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
+    ln -sf /usr/bin/python3.12 /usr/bin/python
+
+# 2. RClone Install
+RUN curl -s https://rclone.org/install.sh | bash
+
+# 3. Install UV (Fast Package Manager)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
+# 4. Compile MEGA SDK (The Real MegaApi from C++ Source)
+RUN git clone --depth 1 --branch v4.8.0 https://github.com/meganz/sdk.git /tmp/sdk && \
     cd /tmp/sdk && \
     ./autogen.sh && \
     ./configure --disable-silent-rules --enable-python --with-sodium --disable-examples && \
     make -j$(nproc) && \
     cd bindings/python && \
-    python3 setup.py bdist_wheel
+    python3 setup.py bdist_wheel && \
+    cp dist/*.whl /tmp/mega_sdk.whl && \
+    rm -rf /tmp/sdk
 
-# ==========================================
-# STAGE 2: FINAL PRODUCTION IMAGE
-# ==========================================
-FROM python:3.12-slim-bookworm
+# 5. Setup Venv & Install MEGA SDK
+RUN python3 -m venv .venv
+RUN pip install --no-cache-dir /tmp/mega_sdk.whl && rm /tmp/mega_sdk.whl
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PATH="/usr/src/app/.venv/bin:$PATH"
-
-WORKDIR /usr/src/app
-
-# 1. OS Dependencies & Binaries (Mega SDK runtime libs included)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    aria2 qbittorrent-nox ffmpeg p7zip-full unzip wget curl git \
-    libmagic1 libmediainfo0v5 libmediainfo-dev libxml2 libxslt1.1 \
-    libglib2.0-0 libsodium23 libc-ares2 libssl3 libsqlite3-0 \
-    libcurl4 libfreeimage3 libpcre3 libcrypto++-dev \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# 2. RClone Install
-RUN curl -s https://rclone.org/install.sh | bash
-
-# 3. MAGIC SYMLINKS (Custom names ko standard binaries se jodna)
+# 6. MAGIC SYMLINKS (Custom names ko standard binaries se jodna)
 RUN ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/torrentgod && \
     ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/stormtorrent && \
     ln -sf /usr/bin/aria2c /usr/local/bin/blitzfetcher && \
@@ -56,25 +54,44 @@ RUN ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/torrentgod && \
     echo -e '#!/bin/bash\nexit 0' > /usr/local/bin/newsripper && \
     chmod +x /usr/local/bin/newsripper
 
-# 4. UV Installer & Venv Setup
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
-RUN uv venv .venv
-
-# 5. Main Dependencies (Pehle normal requirements install)
+# 7. Install Base Requirements (Filtering out fake mega.py and pycrypto)
 COPY requirements.txt .
-RUN uv pip install --no-cache -r requirements.txt
+RUN grep -vEi '^(mega|mega\.py|pycrypto)' requirements.txt > /tmp/safe_req.txt 2>/dev/null || true && \
+    uv pip install --no-cache -r /tmp/safe_req.txt && \
+    rm /tmp/safe_req.txt
 
-# 6. 🚨 CRITICAL FIX: Overwrite PyPI mega.py with our compiled Mega SDK (MegaApi)
-COPY --from=megabuilder /tmp/sdk/bindings/python/dist/*.whl /tmp/
-RUN uv pip install --no-cache-dir --force-reinstall /tmp/*.whl && rm -rf /tmp/*.whl
+# 8. 🚨 WRAPPER HACK (Prevent update.py from sabotaging at runtime)
+# Wrap UV
+RUN mv /usr/local/bin/uv /usr/local/bin/uv-original && \
+    echo '#!/bin/bash' > /usr/local/bin/uv && \
+    echo 'ARGS=()' >> /usr/local/bin/uv && \
+    echo 'for arg in "$@"; do' >> /usr/local/bin/uv && \
+    echo '  if [[ "$arg" == *requirements.txt ]]; then' >> /usr/local/bin/uv && \
+    echo '    grep -vEi "^(mega|mega\.py|pycrypto)" "$arg" > /tmp/safe_req.txt 2>/dev/null || true' >> /usr/local/bin/uv && \
+    echo '    ARGS+=("/tmp/safe_req.txt")' >> /usr/local/bin/uv && \
+    echo '  elif [[ "$arg" == "mega" || "$arg" == "mega.py" || "$arg" == "pycrypto" ]]; then continue' >> /usr/local/bin/uv && \
+    echo '  else ARGS+=("$arg"); fi' >> /usr/local/bin/uv && \
+    echo 'done' >> /usr/local/bin/uv && \
+    echo '/usr/local/bin/uv-original "${ARGS[@]}"' >> /usr/local/bin/uv && \
+    chmod +x /usr/local/bin/uv
 
-# 7. Fix pycrypto SyntaxError (Python 3.12 compatibility)
-RUN uv pip uninstall -y pycrypto || true
-RUN uv pip install --no-cache "pycryptodome" "tenacity>=8.2.0"
+# Wrap PIP
+RUN mv /usr/src/app/.venv/bin/pip /usr/src/app/.venv/bin/pip-original && \
+    echo '#!/bin/bash' > /usr/src/app/.venv/bin/pip && \
+    echo 'ARGS=()' >> /usr/src/app/.venv/bin/pip && \
+    echo 'for arg in "$@"; do' >> /usr/src/app/.venv/bin/pip && \
+    echo '  if [[ "$arg" == *requirements.txt ]]; then' >> /usr/src/app/.venv/bin/pip && \
+    echo '    grep -vEi "^(mega|mega\.py|pycrypto)" "$arg" > /tmp/safe_req.txt 2>/dev/null || true' >> /usr/src/app/.venv/bin/pip && \
+    echo '    ARGS+=("/tmp/safe_req.txt")' >> /usr/src/app/.venv/bin/pip && \
+    echo '  elif [[ "$arg" == "mega" || "$arg" == "mega.py" || "$arg" == "pycrypto" ]]; then continue' >> /usr/src/app/.venv/bin/pip && \
+    echo '  else ARGS+=("$arg"); fi' >> /usr/src/app/.venv/bin/pip && \
+    echo 'done' >> /usr/src/app/.venv/bin/pip && \
+    echo '/usr/src/app/.venv/bin/pip-original "${ARGS[@]}"' >> /usr/src/app/.venv/bin/pip && \
+    chmod +x /usr/src/app/.venv/bin/pip
 
-# 8. Copy Rest of the Code
+# 9. Copy Code & Permissions
 COPY . .
 RUN chmod +x start.sh 2>/dev/null || true
 
-# 9. ULTIMATE CMD (Aria2 Daemon Start + Bot Start)
+# 10. ULTIMATE CMD (Aria2 Daemon Start + Bot Start)
 CMD aria2c --enable-rpc --rpc-listen-all=true --rpc-allow-origin-all --daemon=true --log=aria2.log --log-level=notice && bash start.sh
