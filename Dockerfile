@@ -54,9 +54,12 @@ RUN curl https://rclone.org/install.sh | bash
 
 RUN ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/torrentgod && \
     ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/stormtorrent && \
-    ln -sf /usr/bin/aria2c /usr/local/bin/blitzfetcher && \
     ln -sf /usr/bin/aria2c /usr/local/bin/speeddemon && \
+    ln -sf /usr/bin/aria2c /usr/local/bin/blitzfetcher && \
+    ln -sf /usr/bin/ffmpeg /usr/local/bin/vidwarlock && \
     ln -sf /usr/bin/ffmpeg /usr/local/bin/mediaforge && \
+    ln -sf /usr/bin/ffprobe /usr/local/bin/ffprobe && \
+    ln -sf /usr/local/bin/rclone /usr/local/bin/cloudphantom && \
     ln -sf /usr/local/bin/rclone /usr/local/bin/ghostdrive
 
 RUN python -m venv .venv
