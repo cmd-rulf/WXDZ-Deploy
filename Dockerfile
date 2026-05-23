@@ -1,60 +1,26 @@
-FROM python:3.10-slim-bookworm AS megabuilder
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    build-essential \
-    python3-dev \
-    gcc \
-    g++ \
-    make \
-    autoconf \
-    automake \
-    libtool \
-    m4 \
-    pkg-config \
-    swig \
-    cmake \
-    libsodium-dev \
-    libc-ares-dev \
-    libssl-dev \
-    libcrypto++-dev \
-    libsqlite3-dev \
-    libcurl4-openssl-dev \
-    libfreeimage-dev \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-ENV MEGA_SDK_VERSION=4.8.0
-RUN git clone --depth 1 --branch v${MEGA_SDK_VERSION} https://github.com/meganz/sdk.git /tmp/sdk && \
-    cd /tmp/sdk && \
-    ./autogen.sh && \
-    ./configure \
-        --disable-silent-rules \
-        --enable-python \
-        --with-sodium \
-        --disable-examples && \
-    make -j1 && \
-    cd bindings/python && \
-    python3 setup.py bdist_wheel
+FROM python:3.11-slim-bookworm
 
-# Stage 2 — Final lightweight runtime image
-# =========================================================
-FROM python:3.10-slim-bookworm
-ENV PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive \
-    PIP_NO_CACHE_DIR=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PATH="/usr/local/bin:$PATH"
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
 WORKDIR /usr/src/app
+
+# 1. OS Dependencies & Binaries Install (Mediainfo, Aria2, qBittorrent, FFmpeg)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash \
-    curl \
-    git \
-    ffmpeg \
     aria2 \
     qbittorrent-nox \
+    ffmpeg \
     p7zip-full \
     unzip \
-    libmagic1 \
+    wget \
+    curl \
+    git \
+    libmediainfo0v5 \
+    libmediainfo-dev \
+    libxml2 \
+    libxslt1.1 \
     libglib2.0-0 \
     libsodium23 \
     libc-ares2 \
@@ -63,30 +29,39 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4 \
     libfreeimage3 \
     ca-certificates \
-    && apt-get clean \
+    build-essential \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
-RUN curl https://rclone.org/install.sh | bash
+
+# 2. RClone Install
+RUN curl -s https://rclone.org/install.sh | bash
+
+# 3. UV Installer (Fast pip operations)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
-COPY --from=megabuilder /tmp/sdk/bindings/python/dist/*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/*.whl && \
-    rm -rf /tmp/*.whl
-RUN useradd -m botuser && \
-    mkdir -p /downloads /temp && \
-    chown -R botuser:botuser /usr/src/app /downloads /temp
-RUN ln -sf $(which qbittorrent-nox) /usr/local/bin/stormtorrent && \
-    ln -sf $(which aria2c) /usr/local/bin/blitzfetcher && \
-    ln -sf $(which ffmpeg) /usr/local/bin/mediaforge && \
-    ln -sf $(which rclone) /usr/local/bin/ghostdrive
+
+# 4. MAGIC SYMLINKS (Purane custom names ko naye standard binaries se jodna)
+RUN ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/torrentgod && \
+    ln -sf /usr/bin/aria2c /usr/local/bin/blitzfetcher && \
+    ln -sf /usr/bin/aria2c /usr/local/bin/speeddemon && \
+    ln -sf /usr/bin/ffmpeg /usr/local/bin/mediaforge && \
+    ln -sf /usr/local/bin/rclone /usr/local/bin/ghostdrive && \
+    echo -e '#!/bin/bash\nexit 0' > /usr/local/bin/newsripper && \
+    chmod +x /usr/local/bin/newsripper
+
+# 5. User & Venv Setup
+RUN useradd -m botuser && chown -R botuser:botuser /usr/src/app
 USER botuser
 RUN uv venv .venv
 ENV PATH="/usr/src/app/.venv/bin:$PATH"
 
-COPY requirements.txt .
-RUN uv pip install --no-cache-dir -r requirements.txt
+# 6. Copy Code & Pre-install Dependencies
 COPY --chown=botuser:botuser . .
+RUN if [ -f requirements.txt ]; then uv pip install --no-cache-dir -r requirements.txt "tenacity>=8.2.0" "mega.py"; fi
 
-ENV MALLOC_ARENA_MAX=2
-ENV QBT_PROFILE=/tmp/qbt
-ENV TMPDIR=/tmp
+# 7. AUTO-FIX start.sh (Tenacity & Mega ko force upgrade karega bot start hone se theek pehle)
+RUN sed -i -e 's/python3 -m bot/pip install --upgrade "tenacity>=8.2.0" "mega.py" \&\& python3 -m bot/g' \
+           -e 's/python -m bot/pip install --upgrade "tenacity>=8.2.0" "mega.py" \&\& python -m bot/g' start.sh 2>/dev/null || true
+RUN chmod +x start.sh 2>/dev/null || true
 
-CMD ["bash", "start.sh"]
+# 8. ULTIMATE CMD (Aria2 Daemon Start + Bot Start)
+CMD aria2c --enable-rpc --rpc-listen-all=true --rpc-allow-origin-all --daemon=true --log=aria2.log --log-level=notice && bash start.sh
