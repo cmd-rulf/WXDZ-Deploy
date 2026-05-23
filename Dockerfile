@@ -1,13 +1,13 @@
 FROM python:3.12-slim-bookworm
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1
-ENV PIP_NO_CACHE_DIR=1
-ENV PYTHONDONTWRITEBYTECODE=1
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /usr/src/app
 
-# 1. OS Dependencies & Binaries Install
+# 1. OS Dependencies & Binaries Install (libmagic1 included)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     aria2 \
     qbittorrent-nox \
@@ -55,9 +55,12 @@ USER botuser
 RUN uv venv .venv
 ENV PATH="/usr/src/app/.venv/bin:$PATH"
 
-# 6. Copy Requirements & Pre-install Dependencies (Force tenacity & mega.py)
+# 6. Copy Requirements & Pre-install Dependencies
 COPY --chown=botuser:botuser requirements.txt .
-RUN uv pip install --no-cache-dir -r requirements.txt "tenacity>=8.2.0" "mega.py"
+# Install dependencies + force pycryptodome to prevent pycrypto Python 2 syntax errors
+RUN uv pip install --no-cache-dir -r requirements.txt "tenacity>=8.2.0" "mega.py" "pycryptodome"
+# Nuke the ancient pycrypto package jo SyntaxError de raha tha
+RUN uv pip uninstall pycrypto || true
 
 # 7. Copy Rest of the Code
 COPY --chown=botuser:botuser . .
