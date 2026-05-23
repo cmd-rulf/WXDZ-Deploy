@@ -23,7 +23,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     unzip \
     p7zip-full \
-    unrar \
     tar \
     ffmpeg \
     mediainfo \
@@ -58,6 +57,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 RUN curl https://rclone.org/install.sh | bash
+
+RUN mkdir -p /JDownloader/cfg && \
+    cd /JDownloader && \
+    wget -O JDownloader.jar http://installer.jdownloader.org/JDownloader.jar
 
 RUN ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/torrentgod && \
     ln -sf /usr/bin/aria2c /usr/local/bin/speeddemon && \
