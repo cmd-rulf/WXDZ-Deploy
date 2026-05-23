@@ -1,19 +1,15 @@
 FROM python:3.12-slim-bookworm
 
-# ==========================================
-# ENV
-# ==========================================
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    SETUPTOOLS_USE_DISTUTILS=local
+    PATH="/usr/src/app/.venv/bin:$PATH"
 
 WORKDIR /usr/src/app
 
-# ==========================================
-# INSTALL ALL SYSTEM DEPENDENCIES
-# ==========================================
+RUN chmod 777 /usr/src/app
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
@@ -51,71 +47,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ==========================================
-# VERIFY GCC EXISTS
-# ==========================================
-RUN gcc --version
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-# ==========================================
-# INSTALL UV
-# ==========================================
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
-# ==========================================
-# INSTALL RCLONE
-# ==========================================
 RUN curl https://rclone.org/install.sh | bash
 
-# ==========================================
-# CUSTOM ALIASES
-# ==========================================
-RUN ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/torrentgod && \
-    ln -sf /usr/bin/qbittorrent-nox /usr/local/bin/stormtorrent && \
-    ln -sf /usr/bin/aria2c /usr/local/bin/blitzfetcher && \
-    ln -sf /usr/bin/aria2c /usr/local/bin/speeddemon && \
-    ln -sf /usr/bin/ffmpeg /usr/local/bin/mediaforge && \
-    ln -sf /usr/local/bin/rclone /usr/local/bin/ghostdrive
+RUN uv venv --system-site-packages .venv
 
-# ==========================================
-# UPGRADE BUILD TOOLS
-# ==========================================
-RUN pip install --upgrade \
+RUN .venv/bin/pip install --upgrade \
     pip \
     setuptools \
     wheel \
     cython
 
-# ==========================================
-# COPY REQUIREMENTS
-# ==========================================
 COPY requirements.txt .
 
-# ==========================================
-# REMOVE BROKEN PACKAGES
-# ==========================================
-RUN sed -i '/pycrypto/d' requirements.txt || true && \
-    sed -i '/mega/d' requirements.txt || true
+RUN .venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# ==========================================
-# INSTALL TGCRYPTO FIRST
-# ==========================================
-RUN pip install --no-cache-dir tgcrypto
-
-# ==========================================
-# INSTALL REQUIREMENTS
-# ==========================================
-RUN uv pip install --system -r requirements.txt
-
-# ==========================================
-# FIXED PYTHON PACKAGES
-# ==========================================
-RUN pip install --no-cache-dir \
-    pycryptodome \
-    "tenacity>=8.2.0"
-
-# ==========================================
-# BUILD MEGA SDK
-# ==========================================
 RUN git clone --depth 1 --branch v4.8.0 \
     https://github.com/meganz/sdk.git /tmp/sdk && \
     cd /tmp/sdk && \
@@ -126,28 +73,12 @@ RUN git clone --depth 1 --branch v4.8.0 \
     --disable-examples && \
     make -j$(nproc) && \
     cd bindings/python && \
-    python setup.py install
+    /usr/src/app/.venv/bin/python setup.py install
 
-# ==========================================
-# CLEANUP
-# ==========================================
 RUN rm -rf /tmp/sdk
 
-# ==========================================
-# COPY APP
-# ==========================================
 COPY . .
 
 RUN chmod +x start.sh || true
 
-# ==========================================
-# START
-# ==========================================
-CMD aria2c \
-    --enable-rpc \
-    --rpc-listen-all=true \
-    --rpc-allow-origin-all \
-    --daemon=true \
-    --log=aria2.log \
-    --log-level=notice \
-    && bash start.sh
+CMD ["bash", "start.sh"]
