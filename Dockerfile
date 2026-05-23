@@ -47,11 +47,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
-
 RUN curl https://rclone.org/install.sh | bash
 
-RUN uv venv --system-site-packages .venv
+RUN python -m venv .venv
+
+RUN .venv/bin/python -m ensurepip --upgrade
 
 RUN .venv/bin/pip install --upgrade \
     pip \
