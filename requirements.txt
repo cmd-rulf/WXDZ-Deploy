@@ -17,9 +17,9 @@ google-auth-oauthlib
 gunicorn
 httpx
 langcodes
+language_data
 jinja2
 lxml
-mega.py
 motor
 natsort
 par2cmdline-turbo
@@ -27,8 +27,8 @@ pillow
 psutil
 pycountry
 pymongo
-#pyrofork==2.2.11
-pyrofork
+pyrofork==2.2.11
+#pyrofork
 python-magic
 pytz
 qbittorrent-api
@@ -42,3 +42,4 @@ uvicorn
 uvloop
 xattr
 yt-dlp[default,curl-cffi]
+beautifulsoup4
