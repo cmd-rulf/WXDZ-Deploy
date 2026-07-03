@@ -94,7 +94,7 @@ if UPSTREAM_REPO:
     log_info(f"UPSTREAM_REPO: {UPSTREAM_REPO} | UPSTREAM_BRANCH: {UPSTREAM_BRANCH}")
 
 
-UPDATE_PKGS = config_file.get("UPDATE_PKGS", "True")
+UPDATE_PKGS = config_file.get("UPDATE_PKGS", "False")
 if (isinstance(UPDATE_PKGS, str) and UPDATE_PKGS.lower() == "true") or UPDATE_PKGS:
     scall("uv pip install -U -r requirements.txt", shell=True)
     log_info("Successfully Updated all the Packages !")
