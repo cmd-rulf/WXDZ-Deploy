@@ -6,7 +6,7 @@ anytree
 apscheduler
 aioaria2
 aioqbt
-cinemagoer
+cinemagoer==2023.5.1
 cloudscraper
 dnspython
 fastapi
